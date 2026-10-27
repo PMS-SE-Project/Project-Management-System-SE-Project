@@ -1,7 +1,4 @@
 -r requirements.txt
 pytest
-<<<<<<< HEAD
-=======
 httpx
 mongomock
->>>>>>> origin/tests-suhas
