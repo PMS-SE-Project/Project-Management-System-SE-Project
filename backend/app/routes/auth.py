@@ -1,4 +1,5 @@
 from fastapi import APIRouter, HTTPException
+import re
 import uuid
 
 from app.database.connection import users_collection, sessions_collection
@@ -10,7 +11,13 @@ router = APIRouter(prefix="/auth", tags=["Authentication"])
 
 @router.post("/login")
 def login(credentials: LoginRequest):
-    user = users_collection.find_one({"email": credentials.email})
+    email_pattern = f"^{re.escape(str(credentials.email))}$"
+    user = users_collection.find_one({
+        "email": {
+            "$regex": email_pattern,
+            "$options": "i"
+        }
+    })
 
     if not user:
         raise HTTPException(
