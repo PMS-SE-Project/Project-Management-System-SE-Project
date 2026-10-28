@@ -65,7 +65,7 @@ def test_login_password_is_case_sensitive(client):
     assert login(client, USERS["admin"][0], "admin@123").status_code == 401
 
 
-@pytest.mark.xfail(reason="BUG: password longer than 4096 chars crashes login with HTTP 500 (passlib PasswordSizeError)", strict=True)
+
 def test_login_very_long_password_does_not_crash(client):
     r = login(client, USERS["admin"][0], "A" * 5000)
     assert r.status_code in (401, 422)  # must never be a 500
