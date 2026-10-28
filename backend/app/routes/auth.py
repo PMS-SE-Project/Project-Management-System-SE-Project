@@ -1,10 +1,11 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 import re
 import uuid
 
 from app.database.connection import users_collection, sessions_collection
 from app.schemas.auth import LoginRequest
 from app.auth.password import verify_password
+from app.auth.session import get_current_session
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
@@ -64,3 +65,7 @@ def logout(session_id: str):
     return {
         "message": "Logout successful"
     }
+
+@router.get("/me")
+def me(session=Depends(get_current_session)):
+    return {"email": session["email"], "role": session["role"]}
