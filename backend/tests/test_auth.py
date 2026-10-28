@@ -77,7 +77,7 @@ def test_each_login_gets_a_unique_session_id(client):
     assert len(ids) == 5
 
 
-@pytest.mark.xfail(reason="BUG: email lookup is case-sensitive, so ADMIN@pms.com cannot log in", strict=True)
+
 def test_login_email_is_case_insensitive(client):
     assert login(client, "ADMIN@PMS.COM", USERS["admin"][1]).status_code == 200
 
