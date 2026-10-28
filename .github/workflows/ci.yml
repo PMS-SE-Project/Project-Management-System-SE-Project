@@ -1,0 +1,57 @@
+# Put this file at:  .github/workflows/ci.yml
+#
+# Runs the backend pytest suite on every pull request, on every push to main,
+# and on demand from the Actions tab.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# If you push again while a run is in progress, cancel the old run.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  backend-tests:
+    name: Backend tests (pytest)   # keep this name stable: branch protection refers to it
+    runs-on: ubuntu-latest
+    timeout-minutes: 10            # a hung test can't burn runner minutes forever
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - name: Get the code
+        uses: actions/checkout@v7
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            backend/requirements.txt
+            backend/requirements-dev.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
+      - name: Run tests
+        run: python -m pytest -v -ra --junitxml=pytest-report.xml
+
+      - name: Save test report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: pytest-report
+          path: backend/pytest-report.xml
