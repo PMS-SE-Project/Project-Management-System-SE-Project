@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from app.database.connection import client
 from app.routes.auth import router as auth_router
-
+from app.routes.project import router as projects_router
 app = FastAPI(title="Project Management System")
 
 
@@ -20,3 +20,4 @@ def health():
 
 
 app.include_router(auth_router)
+app.include_router(projects_router)
