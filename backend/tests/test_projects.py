@@ -134,7 +134,7 @@ def test_unknown_session_rejected(client, projects):
 
 # ---------- Case-insensitive duplicate rule (needs real MongoDB collation) ----------
 
-REAL_URI = os.getenv("TEST_MONGO_URI")
+REAL_URI = os.getenv("TEST_MONGO_URI") or os.getenv("MONGO_URI")
 
 
 @pytest.mark.skipif(not REAL_URI, reason="needs a real MongoDB; set TEST_MONGO_URI (CI provides one)")
