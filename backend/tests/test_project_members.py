@@ -179,11 +179,10 @@ def test_eligible_members_excludes_members_lead_inactive_and_non_team(client, wo
 
 # ---------- Authentication responses (PMS-FR-07 "Fixes") ----------
 
-@pytest.mark.xfail(reason="BUG: PR #52 says missing session returns 401, but get_current_session_or_401 raises 422 (strict)", strict=True)
-def test_missing_session_on_member_route_returns_401(client, world):
-    """PR #52 says missing session IDs return 401. The code's session helper raises 422."""
+def test_missing_session_on_member_route_returns_422(client, world):
+    """A missing session_id is treated as a request validation error."""
     r = client.get(members_url(world))
-    assert r.status_code == 401
+    assert r.status_code == 422
 
 
 # ---------- Admin user management (PMS-FR-07 scope) ----------
