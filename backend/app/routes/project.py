@@ -4,7 +4,11 @@ from bson import ObjectId
 from pymongo.errors import DuplicateKeyError
 from fastapi import APIRouter, Depends, HTTPException, status
 
-from app.auth.session import get_current_session, get_current_session_or_401
+from app.auth.session import (
+    get_current_session,
+    get_current_session_or_401,
+    get_current_session_or_unauthorized,
+)
 from app.database.connection import projects_collection, users_collection
 from app.schemas.project import ProjectCreate, ProjectMemberCreate, ProjectUpdate
 
@@ -315,7 +319,7 @@ def get_eligible_project_leads(
 def update_project(
     project_id: str,
     project: ProjectUpdate,
-    session=Depends(get_current_session),
+    session=Depends(get_current_session_or_unauthorized),
 ):
     # Authorization
     if session.get("role") != "project_manager":

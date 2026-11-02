@@ -5,7 +5,7 @@ import uuid
 from app.database.connection import users_collection, sessions_collection
 from app.schemas.auth import LoginRequest
 from app.auth.password import verify_password
-from app.auth.session import get_current_session
+from app.auth.session import get_current_session_or_unauthorized
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
@@ -42,6 +42,7 @@ def login(credentials: LoginRequest):
 
     sessions_collection.insert_one({
         "session_id": session_id,
+        "user_id": user["_id"],
         "email": user["email"],
         "role": user["role"]
     })
@@ -73,5 +74,5 @@ def logout(session_id: str):
     }
 
 @router.get("/me")
-def me(session=Depends(get_current_session)):
+def me(session=Depends(get_current_session_or_unauthorized)):
     return {"email": session["email"], "role": session["role"]}
