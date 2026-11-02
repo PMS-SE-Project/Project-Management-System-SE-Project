@@ -26,6 +26,12 @@ def login(credentials: LoginRequest):
             detail="Invalid email or password"
         )
 
+    if user.get("is_active", True) is False:
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid email or password"
+        )
+
     if not verify_password(credentials.password, user["password_hash"]):
         raise HTTPException(
             status_code=401,

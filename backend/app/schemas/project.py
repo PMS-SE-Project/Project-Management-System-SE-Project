@@ -45,7 +45,6 @@ class ProjectUpdate(BaseModel):
         if len(value) < 2:
             raise ValueError("Project name must contain at least 2 characters")
         return value
-
     @field_validator("status")
     @classmethod
     def validate_status(cls, value: str | None) -> str | None:
@@ -79,3 +78,7 @@ class ProjectUpdate(BaseModel):
             value = value.strip()
             return value or None
         return value
+
+
+class ProjectMemberCreate(BaseModel):
+    user_id: str = Field(..., min_length=1)
