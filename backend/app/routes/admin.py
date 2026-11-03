@@ -98,11 +98,19 @@ def update_user(
                 detail="Project Lead role cannot be removed while assigned to a project",
             )
 
+    role_changed = "role" in updates and updates["role"] != existing.get("role")
     if updates:
         try:
             users_collection.update_one({"_id": existing["_id"]}, {"$set": updates})
         except DuplicateKeyError:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Email is already registered")
+        if role_changed:
+            sessions_collection.delete_many({
+                "$or": [
+                    {"user_id": existing["_id"]},
+                    {"email": existing.get("email")},
+                ]
+            })
         if "email" in updates and updates["email"] != existing.get("email"):
             sessions_collection.delete_many({"email": existing.get("email")})
 
