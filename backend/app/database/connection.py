@@ -13,6 +13,7 @@ db = client[DATABASE_NAME]
 users_collection = db["users"]
 sessions_collection = db["sessions"]
 projects_collection = db["projects"]
+tasks_collection = db["tasks"]
 
 projects_collection.create_index(
     [("name", ASCENDING)],
