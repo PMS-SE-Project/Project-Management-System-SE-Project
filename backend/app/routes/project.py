@@ -68,11 +68,11 @@ def _as_object_id(value):
 
 
 def _get_authenticated_user(session):
-    user_id = _as_object_id(session.get("user_id"))
-    if user_id is not None:
-        user = users_collection.find_one({"_id": user_id})
-        if user is not None:
-            return user
+    if "user_id" in session:
+        user_id = _as_object_id(session.get("user_id"))
+        if user_id is None:
+            return None
+        return users_collection.find_one({"_id": user_id})
     return users_collection.find_one({"email": session.get("email")})
 
 
@@ -302,7 +302,13 @@ def create_task(
         "created_by": session["email"],
         "created_at": datetime.now(timezone.utc),
     }
-    result = tasks_collection.insert_one(task_data)
+    try:
+        result = tasks_collection.insert_one(task_data)
+    except DuplicateKeyError:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="A task with this title already exists in the project",
+        )
     task_data["_id"] = result.inserted_id
 
     return {"task": _serialize_task(task_data)}
