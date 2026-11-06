@@ -1,5 +1,7 @@
 from pymongo import MongoClient, ASCENDING
+from pymongo.errors import DuplicateKeyError
 from dotenv import load_dotenv
+import logging
 import os
 
 load_dotenv()
@@ -13,9 +15,24 @@ db = client[DATABASE_NAME]
 users_collection = db["users"]
 sessions_collection = db["sessions"]
 projects_collection = db["projects"]
+tasks_collection = db["tasks"]
 
 projects_collection.create_index(
     [("name", ASCENDING)],
     unique=True,
     collation={"locale": "en", "strength": 2},
 )
+
+
+try:
+    tasks_collection.create_index(
+        [("project_id", ASCENDING), ("title", ASCENDING)],
+        unique=True,
+        name="project_id_1_title_1",
+    )
+except DuplicateKeyError:
+    logging.getLogger(__name__).warning(
+        "Cannot create unique task index because duplicate (project_id, title) "
+        "records already exist. Resolve the duplicates manually to enable "
+        "database-level uniqueness."
+    )

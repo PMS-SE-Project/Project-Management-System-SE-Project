@@ -2,15 +2,16 @@ from datetime import date, datetime, timezone
 
 from bson import ObjectId
 from pymongo.errors import DuplicateKeyError
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from app.auth.session import (
     get_current_session,
     get_current_session_or_401,
     get_current_session_or_unauthorized,
 )
-from app.database.connection import projects_collection, users_collection
+from app.database.connection import projects_collection, tasks_collection, users_collection
 from app.schemas.project import ProjectCreate, ProjectMemberCreate, ProjectUpdate
+from app.schemas.task import TaskCreate
 
 router = APIRouter(prefix="/projects", tags=["Projects"])
 
@@ -66,6 +67,15 @@ def _as_object_id(value):
     return None
 
 
+def _get_authenticated_user(session):
+    if "user_id" in session:
+        user_id = _as_object_id(session.get("user_id"))
+        if user_id is None:
+            return None
+        return users_collection.find_one({"_id": user_id})
+    return users_collection.find_one({"email": session.get("email")})
+
+
 def _get_project_for_membership(project_id: str):
     if not ObjectId.is_valid(project_id):
         raise HTTPException(
@@ -100,9 +110,113 @@ def _require_project_manager(project, session):
         )
 
 
+def _require_task_creator(project, session):
+    if session.get("role") != "project_manager":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only the assigned Project Manager can create tasks",
+        )
+
+    user = _get_authenticated_user(session)
+
+    lead_id = _as_object_id(project.get("project_lead"))
+    if (
+        not user
+        or user.get("role") != "project_manager"
+        or lead_id is None
+        or lead_id != _as_object_id(user.get("_id"))
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only the assigned Project Manager can create tasks",
+        )
+
+
+def _serialize_task(task):
+    result = dict(task)
+    result["id"] = str(result.pop("_id"))
+    result["project_id"] = str(result["project_id"])
+
+    for field in ("assigned_to",):
+        if isinstance(result.get(field), ObjectId):
+            result[field] = str(result[field])
+    if isinstance(result.get("deadline"), datetime):
+        result["deadline"] = result["deadline"].date().isoformat()
+    elif isinstance(result.get("deadline"), date):
+        result["deadline"] = result["deadline"].isoformat()
+    if isinstance(result.get("created_at"), datetime):
+        result["created_at"] = result["created_at"].isoformat()
+    return result
+
+
+@router.get("/my-projects")
+def get_my_projects(session=Depends(get_current_session_or_401)):
+    user = _get_authenticated_user(session)
+    if user is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated",
+        )
+
+    role = session.get("role")
+    if role == "admin":
+        projects = projects_collection.find({})
+    elif role == "project_manager":
+        user_id = _as_object_id(user.get("_id"))
+        if user_id is None:
+            projects = []
+        else:
+            projects = projects_collection.find(
+                {"project_lead": {"$in": [user_id, str(user_id)]}}
+            )
+    elif role == "team_member":
+        user_id = _as_object_id(user.get("_id"))
+        if user_id is None:
+            projects = []
+        else:
+            projects = projects_collection.find(
+                {"members": {"$in": [user_id, str(user_id)]}}
+            )
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Forbidden",
+        )
+
+    serialized_projects = []
+    for project in projects:
+        serialized = {
+            "id": str(project["_id"]),
+            "name": project.get("name"),
+            "description": project.get("description"),
+            "status": project.get("status"),
+            "project_lead": (
+                str(project["project_lead"])
+                if project.get("project_lead") is not None
+                else None
+            ),
+            "created_at": (
+                project["created_at"].isoformat()
+                if isinstance(project.get("created_at"), (date, datetime))
+                else project.get("created_at")
+            ),
+        }
+        if project.get("target_end_date") is not None:
+            target_end_date = project["target_end_date"]
+            serialized["target_end_date"] = (
+                target_end_date.isoformat()
+                if isinstance(target_end_date, (date, datetime))
+                else target_end_date
+            )
+        serialized_projects.append(serialized)
+
+    return {"projects": serialized_projects}
+
+
 @router.get("/{project_id}/members")
 def list_project_members(
     project_id: str,
+    active_team_members_only: bool = Query(default=False),
     session=Depends(get_current_session_or_401),
 ):
     project = _get_project_for_membership(project_id)
@@ -114,9 +228,90 @@ def list_project_members(
             member_id = ObjectId(member_id)
         if isinstance(member_id, ObjectId):
             user = users_collection.find_one({"_id": member_id})
-            if user:
+            if (
+                user
+                and (
+                    not active_team_members_only
+                    or (
+                        user.get("role") == "team_member"
+                        and user.get("is_active", True) is True
+                    )
+                )
+            ):
                 members.append(_serialize_user(user))
     return {"members": members}
+
+
+@router.post("/{project_id}/tasks", status_code=status.HTTP_201_CREATED)
+def create_task(
+    project_id: str,
+    task: TaskCreate,
+    session=Depends(get_current_session_or_401),
+):
+    project = _get_project_for_membership(project_id)
+    _require_task_creator(project, session)
+
+    if tasks_collection.find_one(
+        {"project_id": project["_id"], "title": task.title}
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="A task with this title already exists in the project",
+        )
+
+    assigned_to = None
+    if task.assigned_to is not None:
+        assigned_to = ObjectId(task.assigned_to)
+        assignee = users_collection.find_one({"_id": assigned_to})
+        if not assignee:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Assigned user not found",
+            )
+        if assignee.get("role") != "team_member":
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Assigned user must be a team member",
+            )
+        if assignee.get("is_active", True) is not True:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Inactive users cannot be assigned to a task",
+            )
+
+        member_ids = {
+            member_id
+            for member_id in (
+                _as_object_id(value) for value in project.get("members", [])
+            )
+            if member_id is not None
+        }
+        if assigned_to not in member_ids:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Assigned user is not a member of this project",
+            )
+
+    task_data = {
+        "project_id": project["_id"],
+        "title": task.title,
+        "description": task.description,
+        "assigned_to": assigned_to,
+        "priority": task.priority,
+        "deadline": _as_datetime(task.deadline) if task.deadline is not None else None,
+        "created_by": session["email"],
+        "created_at": datetime.now(timezone.utc),
+    }
+    try:
+        result = tasks_collection.insert_one(task_data)
+    except DuplicateKeyError:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="A task with this title already exists in the project",
+        )
+    task_data["_id"] = result.inserted_id
+
+    return {"task": _serialize_task(task_data)}
 
 
 @router.get("/{project_id}/eligible-members")
