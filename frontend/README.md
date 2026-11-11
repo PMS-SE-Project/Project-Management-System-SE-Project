@@ -1,32 +1,26 @@
-# React + TypeScript + Vite
+# Project Management System frontend
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+## Environment setup
 
-Currently, two official plugins are available:
+Copy `.env.example` to `.env.local` and adjust the API URL if the backend is
+running somewhere other than `http://127.0.0.1:8000`:
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
-
-## React Compiler
-
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
-
-## Expanding the Oxlint configuration
-
-If you are developing a production application, we recommend enabling type-aware lint rules by installing `oxlint-tsgolint` and editing `.oxlintrc.json`:
-
-```json
-{
-  "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "plugins": ["react", "typescript", "oxc"],
-  "options": {
-    "typeAware": true
-  },
-  "rules": {
-    "react/rules-of-hooks": "error",
-    "react/only-export-components": ["warn", { "allowConstantExport": true }]
-  }
-}
+```text
+VITE_API_BASE_URL=http://127.0.0.1:8000
 ```
 
-See the [Oxlint rules documentation](https://oxc.rs/docs/guide/usage/linter/rules) for the full list of rules and categories.
+`.env.local` and other local environment files are ignored by Git. Never put
+passwords, session IDs, or API secrets in a Vite environment variable.
+
+The backend currently creates a server-side session on `POST /auth/login` and
+expects its returned `session_id` as a query parameter on protected requests.
+The API client accepts that value through the per-request `sessionId` option;
+it does not store or persist it.
+
+## Commands
+
+```bash
+npm run dev
+npm run build
+npm run lint
+```
