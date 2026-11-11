@@ -240,6 +240,21 @@ def _serialize_task(task):
     return result
 
 
+def _serialize_task_comment(comment):
+    created_at = comment.get("created_at")
+    if isinstance(created_at, (date, datetime)):
+        created_at = created_at.isoformat()
+
+    return {
+        "id": str(comment["_id"]),
+        "project_id": str(comment["project_id"]),
+        "task_id": str(comment["task_id"]),
+        "author_id": str(comment["author_id"]),
+        "content": comment["content"],
+        "created_at": created_at,
+    }
+
+
 def _validate_task_assignee(project, assigned_to):
     if assigned_to is None:
         return None
@@ -627,15 +642,39 @@ def create_task_comment(
     result = task_comments_collection.insert_one(comment_data)
     comment_data["_id"] = result.inserted_id
 
+    return {"comment": _serialize_task_comment(comment_data)}
+
+
+@router.get("/{project_id}/tasks/{task_id}/comments")
+def list_task_comments(
+    project_id: str,
+    task_id: str,
+    session=Depends(get_current_session_or_unauthorized),
+):
+    project = _get_project_for_membership(project_id)
+    if not ObjectId.is_valid(task_id):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Task not found",
+        )
+
+    task_object_id = ObjectId(task_id)
+    task = tasks_collection.find_one(
+        {"_id": task_object_id, "project_id": project["_id"]}
+    )
+    if not task:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Task not found",
+        )
+
+    _require_task_status_editor(project, session)
+    comments = task_comments_collection.find(
+        {"project_id": project["_id"], "task_id": task_object_id}
+    ).sort("created_at", 1)
+
     return {
-        "comment": {
-            "id": str(comment_data["_id"]),
-            "project_id": str(comment_data["project_id"]),
-            "task_id": str(comment_data["task_id"]),
-            "author_id": str(comment_data["author_id"]),
-            "content": comment_data["content"],
-            "created_at": comment_data["created_at"].isoformat(),
-        }
+        "comments": [_serialize_task_comment(comment) for comment in comments]
     }
 
 
