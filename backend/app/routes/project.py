@@ -10,9 +10,19 @@ from app.auth.session import (
     get_current_session_or_401,
     get_current_session_or_unauthorized,
 )
-from app.database.connection import projects_collection, tasks_collection, users_collection
+from app.database.connection import (
+    projects_collection,
+    task_comments_collection,
+    tasks_collection,
+    users_collection,
+)
 from app.schemas.project import ProjectCreate, ProjectMemberCreate, ProjectUpdate
-from app.schemas.task import TaskCreate, TaskStatusUpdate, TaskUpdate
+from app.schemas.task import (
+    TaskCommentCreate,
+    TaskCreate,
+    TaskStatusUpdate,
+    TaskUpdate,
+)
 
 router = APIRouter(prefix="/projects", tags=["Projects"])
 
@@ -570,6 +580,63 @@ def update_task_status(
             detail="Task not found",
         )
     return {"task": _serialize_task(updated)}
+
+
+@router.post(
+    "/{project_id}/tasks/{task_id}/comments",
+    status_code=status.HTTP_201_CREATED,
+)
+def create_task_comment(
+    project_id: str,
+    task_id: str,
+    comment: TaskCommentCreate,
+    session=Depends(get_current_session_or_unauthorized),
+):
+    project = _get_project_for_membership(project_id)
+    if not ObjectId.is_valid(task_id):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Task not found",
+        )
+
+    task = tasks_collection.find_one(
+        {"_id": ObjectId(task_id), "project_id": project["_id"]}
+    )
+    if not task:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Task not found",
+        )
+
+    _require_task_status_editor(project, session)
+    author = _get_authenticated_user(session)
+    author_id = _as_object_id(author.get("_id")) if author else None
+    if author_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated",
+        )
+
+    comment_data = {
+        "project_id": project["_id"],
+        "task_id": task["_id"],
+        "author_id": author_id,
+        "content": comment.content,
+        "created_at": datetime.now(timezone.utc),
+    }
+    result = task_comments_collection.insert_one(comment_data)
+    comment_data["_id"] = result.inserted_id
+
+    return {
+        "comment": {
+            "id": str(comment_data["_id"]),
+            "project_id": str(comment_data["project_id"]),
+            "task_id": str(comment_data["task_id"]),
+            "author_id": str(comment_data["author_id"]),
+            "content": comment_data["content"],
+            "created_at": comment_data["created_at"].isoformat(),
+        }
+    }
 
 
 @router.delete("/{project_id}/tasks/{task_id}")
