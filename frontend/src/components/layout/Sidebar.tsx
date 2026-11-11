@@ -1,18 +1,23 @@
 import { NavLink, type NavLinkRenderProps } from 'react-router-dom'
 
+interface SidebarProps {
+  isOpen: boolean
+  onNavigate: () => void
+}
+
 const navigationItems = [
   { label: 'Dashboard', path: '/dashboard', icon: '⌂', end: true },
   { label: 'Projects', path: '/projects', icon: '▦', end: false },
 ]
 
-export function Sidebar() {
+export function Sidebar({ isOpen, onNavigate }: SidebarProps) {
   return (
-    <aside className="sidebar">
+    <aside className={`sidebar${isOpen ? ' sidebar-open' : ''}`}>
       <div className="brand">
         <span className="brand-mark" aria-hidden="true">P</span>
         <span>ProjectHub</span>
       </div>
-      <nav aria-label="Primary navigation">
+      <nav id="primary-navigation" aria-label="Primary navigation">
         {navigationItems.map((item) => (
           <NavLink
             className={({ isActive }: NavLinkRenderProps) =>
@@ -21,6 +26,7 @@ export function Sidebar() {
             end={item.end}
             key={item.path}
             to={item.path}
+            onClick={onNavigate}
           >
             <span className="nav-icon" aria-hidden="true">{item.icon}</span>
             {item.label}
@@ -28,8 +34,8 @@ export function Sidebar() {
         ))}
       </nav>
       <div className="sidebar-footer">
-        <span className="status-dot" aria-hidden="true" />
-        <span>Workspace online</span>
+        <span className="sidebar-footer-mark" aria-hidden="true">+</span>
+        <span>More workspace tools soon</span>
       </div>
     </aside>
   )
