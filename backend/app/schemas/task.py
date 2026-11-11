@@ -131,3 +131,9 @@ class TaskUpdate(BaseModel):
         if parsed < datetime.now(timezone.utc).date():
             raise ValueError("Deadline cannot be earlier than today")
         return parsed
+
+
+class TaskStatusUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    status: Literal["To Do", "In Progress", "Completed"]

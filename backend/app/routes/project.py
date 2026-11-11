@@ -12,7 +12,7 @@ from app.auth.session import (
 )
 from app.database.connection import projects_collection, tasks_collection, users_collection
 from app.schemas.project import ProjectCreate, ProjectMemberCreate, ProjectUpdate
-from app.schemas.task import TaskCreate, TaskUpdate
+from app.schemas.task import TaskCreate, TaskStatusUpdate, TaskUpdate
 
 router = APIRouter(prefix="/projects", tags=["Projects"])
 
@@ -181,6 +181,31 @@ def _require_task_viewer(project, session):
     raise HTTPException(
         status_code=status.HTTP_403_FORBIDDEN,
         detail="You do not have access to this project's tasks",
+    )
+
+
+def _require_task_status_editor(project, session):
+    user = _get_authenticated_user(session)
+    user_id = _as_object_id(user.get("_id")) if user else None
+    role = session.get("role")
+
+    if role == "project_manager":
+        if user_id is not None and user_id == _as_object_id(project.get("project_lead")):
+            return
+    elif role == "team_member":
+        member_ids = {
+            member_id
+            for member_id in (
+                _as_object_id(value) for value in project.get("members", [])
+            )
+            if member_id is not None
+        }
+        if user_id is not None and user_id in member_ids:
+            return
+
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="Only project members can update task status",
     )
 
 
@@ -505,6 +530,40 @@ def update_task(
             detail="A task with this title already exists in the project",
         )
 
+    if not updated:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Task not found",
+        )
+    return {"task": _serialize_task(updated)}
+
+
+@router.patch("/{project_id}/tasks/{task_id}/status")
+def update_task_status(
+    project_id: str,
+    task_id: str,
+    task: TaskStatusUpdate,
+    session=Depends(get_current_session_or_unauthorized),
+):
+    project = _get_project_for_membership(project_id)
+    _require_task_status_editor(project, session)
+
+    if not ObjectId.is_valid(task_id):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Task not found",
+        )
+
+    updated = tasks_collection.find_one_and_update(
+        {"_id": ObjectId(task_id), "project_id": project["_id"]},
+        {
+            "$set": {
+                "status": task.status,
+                "updated_at": datetime.now(timezone.utc),
+            }
+        },
+        return_document=ReturnDocument.AFTER,
+    )
     if not updated:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
