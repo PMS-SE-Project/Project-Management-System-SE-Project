@@ -131,3 +131,25 @@ class TaskUpdate(BaseModel):
         if parsed < datetime.now(timezone.utc).date():
             raise ValueError("Deadline cannot be earlier than today")
         return parsed
+
+
+class TaskStatusUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    status: Literal["To Do", "In Progress", "Completed"]
+
+
+class TaskCommentCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    content: str
+
+    @field_validator("content", mode="before")
+    @classmethod
+    def validate_content(cls, value: str) -> str:
+        if not isinstance(value, str):
+            raise ValueError("Comment content must be a non-empty string")
+        value = value.strip()
+        if not value:
+            raise ValueError("Comment content must not be empty")
+        return value

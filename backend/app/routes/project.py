@@ -10,9 +10,19 @@ from app.auth.session import (
     get_current_session_or_401,
     get_current_session_or_unauthorized,
 )
-from app.database.connection import projects_collection, tasks_collection, users_collection
+from app.database.connection import (
+    projects_collection,
+    task_comments_collection,
+    tasks_collection,
+    users_collection,
+)
 from app.schemas.project import ProjectCreate, ProjectMemberCreate, ProjectUpdate
-from app.schemas.task import TaskCreate, TaskUpdate
+from app.schemas.task import (
+    TaskCommentCreate,
+    TaskCreate,
+    TaskStatusUpdate,
+    TaskUpdate,
+)
 
 router = APIRouter(prefix="/projects", tags=["Projects"])
 
@@ -184,6 +194,31 @@ def _require_task_viewer(project, session):
     )
 
 
+def _require_task_status_editor(project, session):
+    user = _get_authenticated_user(session)
+    user_id = _as_object_id(user.get("_id")) if user else None
+    role = session.get("role")
+
+    if role == "project_manager":
+        if user_id is not None and user_id == _as_object_id(project.get("project_lead")):
+            return
+    elif role == "team_member":
+        member_ids = {
+            member_id
+            for member_id in (
+                _as_object_id(value) for value in project.get("members", [])
+            )
+            if member_id is not None
+        }
+        if user_id is not None and user_id in member_ids:
+            return
+
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="Only project members can update task status",
+    )
+
+
 def _serialize_task(task):
     result = dict(task)
     result["id"] = str(result.pop("_id"))
@@ -203,6 +238,31 @@ def _serialize_task(task):
         if isinstance(result.get(field), datetime):
             result[field] = result[field].isoformat()
     return result
+
+
+def _serialize_task_comment(comment):
+    created_at = comment.get("created_at")
+    if isinstance(created_at, datetime):
+        if created_at.tzinfo is None:
+            created_at = created_at.replace(tzinfo=timezone.utc)
+        else:
+            created_at = created_at.astimezone(timezone.utc)
+        created_at = created_at.isoformat()
+    elif isinstance(created_at, date):
+        created_at = datetime.combine(
+            created_at,
+            datetime.min.time(),
+            tzinfo=timezone.utc,
+        ).isoformat()
+
+    return {
+        "id": str(comment["_id"]),
+        "project_id": str(comment["project_id"]),
+        "task_id": str(comment["task_id"]),
+        "author_id": str(comment["author_id"]),
+        "content": comment["content"],
+        "created_at": created_at,
+    }
 
 
 def _validate_task_assignee(project, assigned_to):
@@ -511,6 +571,121 @@ def update_task(
             detail="Task not found",
         )
     return {"task": _serialize_task(updated)}
+
+
+@router.patch("/{project_id}/tasks/{task_id}/status")
+def update_task_status(
+    project_id: str,
+    task_id: str,
+    task: TaskStatusUpdate,
+    session=Depends(get_current_session_or_unauthorized),
+):
+    project = _get_project_for_membership(project_id)
+    _require_task_status_editor(project, session)
+
+    if not ObjectId.is_valid(task_id):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Task not found",
+        )
+
+    updated = tasks_collection.find_one_and_update(
+        {"_id": ObjectId(task_id), "project_id": project["_id"]},
+        {
+            "$set": {
+                "status": task.status,
+                "updated_at": datetime.now(timezone.utc),
+            }
+        },
+        return_document=ReturnDocument.AFTER,
+    )
+    if not updated:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Task not found",
+        )
+    return {"task": _serialize_task(updated)}
+
+
+@router.post(
+    "/{project_id}/tasks/{task_id}/comments",
+    status_code=status.HTTP_201_CREATED,
+)
+def create_task_comment(
+    project_id: str,
+    task_id: str,
+    comment: TaskCommentCreate,
+    session=Depends(get_current_session_or_unauthorized),
+):
+    project = _get_project_for_membership(project_id)
+    if not ObjectId.is_valid(task_id):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Task not found",
+        )
+
+    task = tasks_collection.find_one(
+        {"_id": ObjectId(task_id), "project_id": project["_id"]}
+    )
+    if not task:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Task not found",
+        )
+
+    _require_task_status_editor(project, session)
+    author = _get_authenticated_user(session)
+    author_id = _as_object_id(author.get("_id")) if author else None
+    if author_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated",
+        )
+
+    comment_data = {
+        "project_id": project["_id"],
+        "task_id": task["_id"],
+        "author_id": author_id,
+        "content": comment.content,
+        "created_at": datetime.now(timezone.utc),
+    }
+    result = task_comments_collection.insert_one(comment_data)
+    comment_data["_id"] = result.inserted_id
+
+    return {"comment": _serialize_task_comment(comment_data)}
+
+
+@router.get("/{project_id}/tasks/{task_id}/comments")
+def list_task_comments(
+    project_id: str,
+    task_id: str,
+    session=Depends(get_current_session_or_unauthorized),
+):
+    project = _get_project_for_membership(project_id)
+    if not ObjectId.is_valid(task_id):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Task not found",
+        )
+
+    task_object_id = ObjectId(task_id)
+    task = tasks_collection.find_one(
+        {"_id": task_object_id, "project_id": project["_id"]}
+    )
+    if not task:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Task not found",
+        )
+
+    _require_task_status_editor(project, session)
+    comments = task_comments_collection.find(
+        {"project_id": project["_id"], "task_id": task_object_id}
+    ).sort("created_at", 1)
+
+    return {
+        "comments": [_serialize_task_comment(comment) for comment in comments]
+    }
 
 
 @router.delete("/{project_id}/tasks/{task_id}")

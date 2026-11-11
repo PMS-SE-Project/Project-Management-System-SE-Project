@@ -16,6 +16,7 @@ users_collection = db["users"]
 sessions_collection = db["sessions"]
 projects_collection = db["projects"]
 tasks_collection = db["tasks"]
+task_comments_collection = db["task_comments"]
 
 projects_collection.create_index(
     [("name", ASCENDING)],
