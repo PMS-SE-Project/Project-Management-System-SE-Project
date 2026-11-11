@@ -1,4 +1,6 @@
-import { Link } from 'react-router-dom'
+import { useState } from 'react'
+import { useNavigate } from 'react-router-dom'
+import { useAuth } from '../../auth/useAuth'
 
 interface HeaderProps {
   isNavigationOpen: boolean
@@ -6,6 +8,20 @@ interface HeaderProps {
 }
 
 export function Header({ isNavigationOpen, onMenuClick }: HeaderProps) {
+  const navigate = useNavigate()
+  const { session, isSigningOut, signOut } = useAuth()
+  const [logoutError, setLogoutError] = useState(false)
+
+  async function handleSignOut() {
+    setLogoutError(false)
+    try {
+      await signOut()
+      navigate('/login', { replace: true })
+    } catch {
+      setLogoutError(true)
+    }
+  }
+
   return (
     <header className="app-header">
       <button
@@ -27,11 +43,29 @@ export function Header({ isNavigationOpen, onMenuClick }: HeaderProps) {
       </div>
       <div className="header-actions">
         <span className="header-note">ProjectHub workspace</span>
-        <Link className="profile-link" to="/login" aria-label="Open account">
-          <span className="avatar" aria-hidden="true">·</span>
-          <span className="profile-name">Account</span>
-        </Link>
+        {session && (
+          <div className="account-summary">
+            <span className="avatar" aria-hidden="true">
+              {session.user.email.charAt(0).toUpperCase()}
+            </span>
+            <span className="profile-name">
+              <strong>{session.user.email}</strong>
+              <small>{session.user.role.replace('_', ' ')}</small>
+            </span>
+          </div>
+        )}
+        {session && (
+          <button
+            className="logout-button"
+            type="button"
+            onClick={handleSignOut}
+            disabled={isSigningOut}
+          >
+            {isSigningOut ? 'Signing out' : 'Log out'}
+          </button>
+        )}
         <span className="header-dot" aria-hidden="true" />
+        {logoutError && <span className="header-auth-error" role="alert">Logout failed</span>}
       </div>
     </header>
   )

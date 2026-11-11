@@ -1,8 +1,12 @@
 import { useState, type FormEvent } from 'react'
+import { useNavigate } from 'react-router-dom'
+import { ApiError } from '../api/client'
+import { useAuth } from '../auth/useAuth'
 import { Alert } from '../components/ui/Alert'
 import { Button } from '../components/ui/Button'
 import { Card } from '../components/ui/Card'
 import { Input } from '../components/ui/Input'
+import type { LoginResponse } from '../types/auth'
 
 interface LoginFormValues {
   email: string
@@ -32,11 +36,15 @@ function validate(values: LoginFormValues): LoginErrors {
 }
 
 export function LoginPage() {
+  const navigate = useNavigate()
+  const { signIn } = useAuth()
   const [values, setValues] = useState<LoginFormValues>({ email: '', password: '' })
   const [errors, setErrors] = useState<LoginErrors>({})
   const [showPassword, setShowPassword] = useState(false)
   const [hasSubmitted, setHasSubmitted] = useState(false)
   const [authError, setAuthError] = useState<string | null>(null)
+  const [isSubmitting, setIsSubmitting] = useState(false)
+  const [loginSession, setLoginSession] = useState<LoginResponse | null>(null)
 
   function updateField(field: keyof LoginFormValues, value: string) {
     setValues((current) => ({ ...current, [field]: value }))
@@ -45,12 +53,45 @@ export function LoginPage() {
     }
   }
 
-  function handleSubmit(event: FormEvent<HTMLFormElement>) {
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     const validationErrors = validate(values)
     setHasSubmitted(true)
     setErrors(validationErrors)
     setAuthError(null)
+    setLoginSession(null)
+
+    if (Object.keys(validationErrors).length > 0) {
+      return
+    }
+
+    setIsSubmitting(true)
+    try {
+      const response = await signIn({
+        email: values.email.trim(),
+        password: values.password,
+      })
+      setLoginSession(response)
+      navigate('/dashboard', {
+        replace: true,
+        state: { loginSession: response },
+      })
+    } catch (error) {
+      if (error instanceof DOMException && error.name === 'AbortError') {
+        return
+      }
+      if (error instanceof ApiError) {
+        setAuthError(
+          error.status === 401
+            ? 'The email or password is incorrect.'
+            : error.backendMessage,
+        )
+      } else {
+        setAuthError('We could not sign you in. Please try again.')
+      }
+    } finally {
+      setIsSubmitting(false)
+    }
   }
 
   return (
@@ -100,13 +141,21 @@ export function LoginPage() {
                 {showPassword ? 'Hide' : 'Show'}
               </button>
             </div>
-            <Alert tone="info">Sign-in is not connected yet. No credentials will be sent.</Alert>
+            {loginSession ? (
+              <Alert tone="success">
+                Login successful. Your session is ready for the next authentication step.
+              </Alert>
+            ) : (
+              <Alert tone="info">Your credentials are sent securely to the ProjectHub API.</Alert>
+            )}
             {authError && <Alert tone="error">{authError}</Alert>}
-            <Button type="submit">Sign in</Button>
+            <Button loading={isSubmitting} type="submit">
+              {isSubmitting ? 'Signing in' : 'Sign in'}
+            </Button>
           </form>
           <div aria-live="polite">
-            {hasSubmitted && Object.keys(errors).length === 0 && (
-              <p className="form-status">Your details look good. Backend sign-in will be added next.</p>
+            {hasSubmitted && Object.keys(errors).length === 0 && !isSubmitting && !loginSession && !authError && (
+              <p className="form-status">Checking your details…</p>
             )}
           </div>
         </Card>
