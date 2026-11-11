@@ -1,6 +1,7 @@
 from datetime import date, datetime, timezone
 
 from bson import ObjectId
+from pymongo import ReturnDocument
 from pymongo.errors import DuplicateKeyError
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
@@ -11,7 +12,7 @@ from app.auth.session import (
 )
 from app.database.connection import projects_collection, tasks_collection, users_collection
 from app.schemas.project import ProjectCreate, ProjectMemberCreate, ProjectUpdate
-from app.schemas.task import TaskCreate
+from app.schemas.task import TaskCreate, TaskUpdate
 
 router = APIRouter(prefix="/projects", tags=["Projects"])
 
@@ -132,6 +133,27 @@ def _require_task_creator(project, session):
         )
 
 
+def _require_task_editor(project, session, action: str):
+    if session.get("role") != "project_manager":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Only the assigned Project Manager can {action} tasks",
+        )
+
+    user = _get_authenticated_user(session)
+    lead_id = _as_object_id(project.get("project_lead"))
+    if (
+        not user
+        or user.get("role") != "project_manager"
+        or lead_id is None
+        or lead_id != _as_object_id(user.get("_id"))
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Only the assigned Project Manager can {action} tasks",
+        )
+
+
 def _serialize_task(task):
     result = dict(task)
     result["id"] = str(result.pop("_id"))
@@ -144,8 +166,9 @@ def _serialize_task(task):
         result["deadline"] = result["deadline"].date().isoformat()
     elif isinstance(result.get("deadline"), date):
         result["deadline"] = result["deadline"].isoformat()
-    if isinstance(result.get("created_at"), datetime):
-        result["created_at"] = result["created_at"].isoformat()
+    for field in ("created_at", "updated_at"):
+        if isinstance(result.get(field), datetime):
+            result[field] = result[field].isoformat()
     return result
 
 
@@ -312,6 +335,128 @@ def create_task(
     task_data["_id"] = result.inserted_id
 
     return {"task": _serialize_task(task_data)}
+
+
+def _validate_task_assignee(project, assigned_to):
+    if assigned_to is None:
+        return None
+
+    assignee_id = ObjectId(assigned_to)
+    assignee = users_collection.find_one({"_id": assignee_id})
+    if not assignee:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Assigned user not found",
+        )
+    if assignee.get("role") != "team_member":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Assigned user must be a team member",
+        )
+    if assignee.get("is_active", True) is not True:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Inactive users cannot be assigned to a task",
+        )
+
+    member_ids = {
+        member_id
+        for member_id in (
+            _as_object_id(value) for value in project.get("members", [])
+        )
+        if member_id is not None
+    }
+    if assignee_id not in member_ids:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Assigned user is not a member of this project",
+        )
+    return assignee_id
+
+
+@router.put("/{project_id}/tasks/{task_id}")
+def update_task(
+    project_id: str,
+    task_id: str,
+    task: TaskUpdate,
+    session=Depends(get_current_session_or_unauthorized),
+):
+    project = _get_project_for_membership(project_id)
+    _require_task_editor(project, session, "edit")
+
+    if not ObjectId.is_valid(task_id):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Task not found",
+        )
+    task_object_id = ObjectId(task_id)
+    existing = tasks_collection.find_one(
+        {"_id": task_object_id, "project_id": project["_id"]}
+    )
+    if not existing:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Task not found",
+        )
+
+    changes = task.model_dump(exclude_unset=True)
+    if not changes:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="At least one field must be provided",
+        )
+
+    if "assigned_to" in changes:
+        changes["assigned_to"] = _validate_task_assignee(
+            project, changes["assigned_to"]
+        )
+    if "deadline" in changes and changes["deadline"] is not None:
+        changes["deadline"] = _as_datetime(changes["deadline"])
+
+    changes["updated_at"] = datetime.now(timezone.utc)
+    try:
+        updated = tasks_collection.find_one_and_update(
+            {"_id": task_object_id, "project_id": project["_id"]},
+            {"$set": changes},
+            return_document=ReturnDocument.AFTER,
+        )
+    except DuplicateKeyError:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="A task with this title already exists in the project",
+        )
+
+    if not updated:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Task not found",
+        )
+    return {"task": _serialize_task(updated)}
+
+
+@router.delete("/{project_id}/tasks/{task_id}")
+def delete_task(
+    project_id: str,
+    task_id: str,
+    session=Depends(get_current_session_or_unauthorized),
+):
+    project = _get_project_for_membership(project_id)
+    _require_task_editor(project, session, "delete")
+
+    if not ObjectId.is_valid(task_id):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Task not found",
+        )
+    result = tasks_collection.delete_one(
+        {"_id": ObjectId(task_id), "project_id": project["_id"]}
+    )
+    if result.deleted_count == 0:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Task not found",
+        )
+    return {"message": "Task deleted successfully"}
 
 
 @router.get("/{project_id}/eligible-members")
