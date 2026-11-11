@@ -154,14 +154,47 @@ def _require_task_editor(project, session, action: str):
         )
 
 
+def _require_task_viewer(project, session):
+    role = session.get("role")
+    if role == "admin":
+        return
+
+    user = _get_authenticated_user(session)
+    user_id = _as_object_id(user.get("_id")) if user else None
+    if role == "project_manager":
+        if (
+            user_id is not None
+            and user_id == _as_object_id(project.get("project_lead"))
+        ):
+            return
+    elif role == "team_member":
+        member_ids = {
+            member_id
+            for member_id in (
+                _as_object_id(value) for value in project.get("members", [])
+            )
+            if member_id is not None
+        }
+        if user_id is not None and user_id in member_ids:
+            return
+
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="You do not have access to this project's tasks",
+    )
+
+
 def _serialize_task(task):
     result = dict(task)
     result["id"] = str(result.pop("_id"))
     result["project_id"] = str(result["project_id"])
+    result["status"] = result.get("status", "To Do")
 
     for field in ("assigned_to",):
         if isinstance(result.get(field), ObjectId):
             result[field] = str(result[field])
+    if isinstance(result.get("created_by"), ObjectId):
+        result["created_by"] = str(result["created_by"])
     if isinstance(result.get("deadline"), datetime):
         result["deadline"] = result["deadline"].date().isoformat()
     elif isinstance(result.get("deadline"), date):
@@ -170,6 +203,43 @@ def _serialize_task(task):
         if isinstance(result.get(field), datetime):
             result[field] = result[field].isoformat()
     return result
+
+
+def _validate_task_assignee(project, assigned_to):
+    if assigned_to is None:
+        return None
+
+    assignee_id = ObjectId(assigned_to)
+    assignee = users_collection.find_one({"_id": assignee_id})
+    if not assignee:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Assigned user not found",
+        )
+    if assignee.get("role") != "team_member":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Assigned user must be a team member",
+        )
+    if assignee.get("is_active", True) is not True:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Inactive users cannot be assigned to a task",
+        )
+
+    member_ids = {
+        member_id
+        for member_id in (
+            _as_object_id(value) for value in project.get("members", [])
+        )
+        if member_id is not None
+    }
+    if assignee_id not in member_ids:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Assigned user is not a member of this project",
+        )
+    return assignee_id
 
 
 @router.get("/my-projects")
@@ -236,6 +306,30 @@ def get_my_projects(session=Depends(get_current_session_or_401)):
     return {"projects": serialized_projects}
 
 
+@router.get("/tasks/my-tasks")
+def get_my_tasks(session=Depends(get_current_session_or_401)):
+    if session.get("role") != "team_member":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only team members can view their assigned tasks",
+        )
+
+    user = _get_authenticated_user(session)
+    user_id = _as_object_id(user.get("_id")) if user else None
+    if user_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated",
+        )
+
+    return {
+        "tasks": [
+            _serialize_task(task)
+            for task in tasks_collection.find({"assigned_to": user_id})
+        ]
+    }
+
+
 @router.get("/{project_id}/members")
 def list_project_members(
     project_id: str,
@@ -284,36 +378,7 @@ def create_task(
 
     assigned_to = None
     if task.assigned_to is not None:
-        assigned_to = ObjectId(task.assigned_to)
-        assignee = users_collection.find_one({"_id": assigned_to})
-        if not assignee:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Assigned user not found",
-            )
-        if assignee.get("role") != "team_member":
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Assigned user must be a team member",
-            )
-        if assignee.get("is_active", True) is not True:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Inactive users cannot be assigned to a task",
-            )
-
-        member_ids = {
-            member_id
-            for member_id in (
-                _as_object_id(value) for value in project.get("members", [])
-            )
-            if member_id is not None
-        }
-        if assigned_to not in member_ids:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Assigned user is not a member of this project",
-            )
+        assigned_to = _validate_task_assignee(project, task.assigned_to)
 
     task_data = {
         "project_id": project["_id"],
@@ -321,6 +386,7 @@ def create_task(
         "description": task.description,
         "assigned_to": assigned_to,
         "priority": task.priority,
+        "status": "To Do",
         "deadline": _as_datetime(task.deadline) if task.deadline is not None else None,
         "created_by": session["email"],
         "created_at": datetime.now(timezone.utc),
@@ -337,41 +403,54 @@ def create_task(
     return {"task": _serialize_task(task_data)}
 
 
-def _validate_task_assignee(project, assigned_to):
-    if assigned_to is None:
-        return None
+@router.get("/{project_id}/tasks")
+def list_project_tasks(
+    project_id: str,
+    status_filter: str | None = Query(default=None, alias="status"),
+    assigned_to: str | None = None,
+    priority: str | None = None,
+    session=Depends(get_current_session_or_401),
+):
+    project = _get_project_for_membership(project_id)
+    _require_task_viewer(project, session)
 
-    assignee_id = ObjectId(assigned_to)
-    assignee = users_collection.find_one({"_id": assignee_id})
-    if not assignee:
+    if priority is not None:
+        priority = priority.strip().lower()
+        if priority not in {"low", "medium", "high"}:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail="Priority must be low, medium, or high",
+            )
+
+    assigned_to_id = None
+    if assigned_to is not None:
+        if not ObjectId.is_valid(assigned_to):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail="Invalid assignee ID",
+            )
+        assigned_to_id = ObjectId(assigned_to)
+
+    allowed_statuses = {"To Do", "In Progress", "Completed"}
+    if status_filter is not None and status_filter not in allowed_statuses:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Assigned user not found",
-        )
-    if assignee.get("role") != "team_member":
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Assigned user must be a team member",
-        )
-    if assignee.get("is_active", True) is not True:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Inactive users cannot be assigned to a task",
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Status must be To Do, In Progress, or Completed",
         )
 
-    member_ids = {
-        member_id
-        for member_id in (
-            _as_object_id(value) for value in project.get("members", [])
-        )
-        if member_id is not None
+    query = {"project_id": project["_id"]}
+    if priority is not None:
+        query["priority"] = priority
+    if assigned_to_id is not None:
+        query["assigned_to"] = assigned_to_id
+    if status_filter == "To Do":
+        query["$or"] = [{"status": "To Do"}, {"status": {"$exists": False}}]
+    elif status_filter is not None:
+        query["status"] = status_filter
+
+    return {
+        "tasks": [_serialize_task(task) for task in tasks_collection.find(query)]
     }
-    if assignee_id not in member_ids:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Assigned user is not a member of this project",
-        )
-    return assignee_id
 
 
 @router.put("/{project_id}/tasks/{task_id}")
