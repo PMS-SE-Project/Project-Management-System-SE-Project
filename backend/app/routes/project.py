@@ -242,8 +242,18 @@ def _serialize_task(task):
 
 def _serialize_task_comment(comment):
     created_at = comment.get("created_at")
-    if isinstance(created_at, (date, datetime)):
+    if isinstance(created_at, datetime):
+        if created_at.tzinfo is None:
+            created_at = created_at.replace(tzinfo=timezone.utc)
+        else:
+            created_at = created_at.astimezone(timezone.utc)
         created_at = created_at.isoformat()
+    elif isinstance(created_at, date):
+        created_at = datetime.combine(
+            created_at,
+            datetime.min.time(),
+            tzinfo=timezone.utc,
+        ).isoformat()
 
     return {
         "id": str(comment["_id"]),
