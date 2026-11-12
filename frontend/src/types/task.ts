@@ -1,3 +1,5 @@
+import type { UserSummary } from './user'
+
 export type TaskStatus = 'To Do' | 'In Progress' | 'Completed'
 export type TaskPriority = 'low' | 'medium' | 'high'
 
@@ -7,6 +9,7 @@ export interface Task {
   title: string
   description: string | null
   assigned_to: string | null
+  assigned_to_user?: UserSummary | null
   priority: TaskPriority
   status: TaskStatus
   deadline: string | null

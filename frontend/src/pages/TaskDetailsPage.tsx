@@ -1,12 +1,12 @@
-import { useParams } from 'react-router-dom'
+import { Link } from 'react-router-dom'
 
 export function TaskDetailsPage() {
-  const { projectId, taskId } = useParams()
   return (
     <section className="page">
-      <p className="eyebrow">Project {projectId}</p>
+      <p className="eyebrow">Task workspace</p>
       <h2>Task details</h2>
-      <p className="page-description">Details for task <strong>{taskId}</strong> will be implemented later.</p>
+      <p className="page-description">Task detail actions will be implemented in a later commit.</p>
+      <Link className="text-link" to="/projects">Back to projects →</Link>
     </section>
   )
 }
