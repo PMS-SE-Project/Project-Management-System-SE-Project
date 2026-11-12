@@ -38,3 +38,13 @@ export function RedirectAuthenticated({ children }: { children: ReactNode }) {
 
   return children
 }
+
+export function RequireAdmin({ children }: { children: ReactNode }) {
+  const { isCheckingSession, session } = useAuth()
+
+  if (isCheckingSession) return <AuthLoading />
+  if (!session) return <Navigate replace to="/login" />
+  if (session.user.role !== 'admin') return <Navigate replace to="/dashboard" />
+
+  return children
+}

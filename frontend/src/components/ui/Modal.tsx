@@ -22,7 +22,12 @@ const focusableSelector = [
 export function Modal({ children, labelledBy, onClose, open, title }: ModalProps) {
   const dialogRef = useRef<HTMLDivElement>(null)
   const previousFocusRef = useRef<HTMLElement | null>(null)
+  const onCloseRef = useRef(onClose)
   const titleId = useId()
+
+  useEffect(() => {
+    onCloseRef.current = onClose
+  }, [onClose])
 
   useEffect(() => {
     if (!open) return
@@ -36,7 +41,7 @@ export function Modal({ children, labelledBy, onClose, open, title }: ModalProps
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
         event.preventDefault()
-        onClose()
+        onCloseRef.current()
         return
       }
       if (event.key !== 'Tab' || !dialog) return
@@ -64,7 +69,7 @@ export function Modal({ children, labelledBy, onClose, open, title }: ModalProps
       document.body.style.overflow = ''
       previousFocusRef.current?.focus()
     }
-  }, [onClose, open])
+  }, [open])
 
   if (!open) return null
 

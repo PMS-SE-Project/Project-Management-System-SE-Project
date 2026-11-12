@@ -65,7 +65,7 @@ function getErrorMessage(payload: unknown, status: number): string {
     }
   }
 
-  if (typeof payload === 'string' && payload.length > 0) {
+  if (typeof payload === 'string' && payload.length > 0 && status < 500) {
     return payload
   }
 
@@ -133,7 +133,13 @@ async function request<T>(
     throw new ApiError(0, 'Unable to reach the API server.')
   }
 
-  const payload = await readResponseBody(response)
+  let payload: unknown
+  try {
+    payload = await readResponseBody(response)
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'AbortError') throw error
+    throw new ApiError(response.ok ? 502 : response.status, 'The server response could not be read. Please try again.')
+  }
   if (!response.ok) {
     if (response.status === 401 && sessionId) {
       unauthorizedHandler?.(sessionId)

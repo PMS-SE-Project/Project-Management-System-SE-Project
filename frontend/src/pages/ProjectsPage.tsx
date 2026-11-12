@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useLocation } from 'react-router-dom'
 import { getProjects } from '../api/projects'
 import { ApiError } from '../api/client'
 import { useAuth } from '../auth/useAuth'
@@ -8,7 +8,9 @@ import { Badge, type BadgeTone } from '../components/ui/Badge'
 import { Button } from '../components/ui/Button'
 import { EmptyState } from '../components/ui/EmptyState'
 import { Spinner } from '../components/ui/Spinner'
-import type { ProjectSummary } from '../types/project'
+import { CreateProjectModal } from '../components/projects/CreateProjectModal'
+import type { Project, ProjectSummary } from '../types/project'
+import './ProjectsPage.css'
 
 type ProjectsStatus = 'loading' | 'success' | 'error'
 
@@ -83,11 +85,16 @@ function ProjectCard({ project, index }: { project: ProjectSummary; index: numbe
 }
 
 export function ProjectsPage() {
+  const location = useLocation()
+  const notice = typeof location.state?.notice === 'string' ? location.state.notice : null
   const { session } = useAuth()
   const [projects, setProjects] = useState<ProjectSummary[]>([])
   const [status, setStatus] = useState<ProjectsStatus>('loading')
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
   const [retryCount, setRetryCount] = useState(0)
+  const [isCreateOpen, setIsCreateOpen] = useState(false)
+  const [createdProject, setCreatedProject] = useState<Project | null>(null)
+  const canCreate = session?.user.role === 'project_manager'
 
   useEffect(() => {
     if (!session) return
@@ -98,6 +105,7 @@ export function ProjectsPage() {
       .then((loadedProjects) => {
         if (controller.signal.aborted) return
         setProjects(loadedProjects)
+        setErrorMessage(null)
         setStatus('success')
       })
       .catch((error: unknown) => {
@@ -125,10 +133,16 @@ export function ProjectsPage() {
             A clear view of the projects you are helping move forward.
           </p>
         </div>
-        <span className="projects-count">
-          {status === 'success' ? `${projects.length} project${projects.length === 1 ? '' : 's'}` : 'Your workspace'}
-        </span>
+        <div className="projects-create-actions">
+          <span className="projects-count">
+            {status === 'success' ? `${projects.length} project${projects.length === 1 ? '' : 's'}` : 'Your workspace'}
+          </span>
+          {canCreate && <Button type="button" onClick={() => setIsCreateOpen(true)}>+ Create Project</Button>}
+        </div>
       </div>
+
+      {createdProject && <Alert tone="success">Project “{createdProject.name}” created successfully. <Link className="text-link" to={`/projects/${createdProject.id}`}>Open project →</Link></Alert>}
+      {notice && <Alert tone="success">{notice}</Alert>}
 
       {status === 'loading' && (
         <div className="projects-status" role="status">
@@ -161,6 +175,12 @@ export function ProjectsPage() {
           ))}
         </div>
       )}
+      {isCreateOpen && canCreate && session && <CreateProjectModal sessionId={session.session_id}
+        onClose={() => setIsCreateOpen(false)} onCreated={(project) => {
+          setIsCreateOpen(false)
+          setCreatedProject(project)
+          retry()
+        }} />}
     </section>
   )
 }

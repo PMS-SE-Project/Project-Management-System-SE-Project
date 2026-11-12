@@ -6,14 +6,14 @@ export interface Project {
   id: string
   name: string
   description: string | null
-  created_by: string
+  created_by?: string | null
   members: string[]
-  status: string
+  status?: string | null
   project_lead?: string | null
   project_lead_user?: UserSummary | null
   start_date?: string | null
   target_end_date?: string | null
-  created_at: string
+  created_at?: string | null
   updated_at?: string
 }
 

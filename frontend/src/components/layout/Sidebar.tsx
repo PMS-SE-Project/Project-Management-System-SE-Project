@@ -1,4 +1,5 @@
 import { NavLink, type NavLinkRenderProps } from 'react-router-dom'
+import { useAuth } from '../../auth/useAuth'
 
 interface SidebarProps {
   isOpen: boolean
@@ -11,6 +12,11 @@ const navigationItems = [
 ]
 
 export function Sidebar({ isOpen, onNavigate }: SidebarProps) {
+  const { session } = useAuth()
+  const visibleNavigationItems = session?.user.role === 'admin'
+    ? [...navigationItems, { label: 'Admin', path: '/admin/users', icon: '⚙', end: false }]
+    : navigationItems
+
   return (
     <aside className={`sidebar${isOpen ? ' sidebar-open' : ''}`}>
       <div className="brand">
@@ -18,7 +24,7 @@ export function Sidebar({ isOpen, onNavigate }: SidebarProps) {
         <span>ProjectHub</span>
       </div>
       <nav id="primary-navigation" aria-label="Primary navigation">
-        {navigationItems.map((item) => (
+        {visibleNavigationItems.map((item) => (
           <NavLink
             className={({ isActive }: NavLinkRenderProps) =>
               `nav-item${isActive ? ' nav-item-active' : ''}`

@@ -1,0 +1,33 @@
+.page .project-details-heading,
+.page .project-team-heading {
+  flex-wrap: wrap;
+}
+
+.page .project-member-list li {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.ui-modal .task-form-row {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 160px), 1fr));
+}
+
+@media (max-width: 640px) {
+  .page .project-details-heading {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .page .project-details-grid,
+  .page .task-detail-grid,
+  .page .kanban-board,
+  .page .dashboard-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .page .project-detail-overview,
+  .page .task-detail-description,
+  .page .dashboard-grid > * {
+    grid-column: span 1;
+  }
+}
