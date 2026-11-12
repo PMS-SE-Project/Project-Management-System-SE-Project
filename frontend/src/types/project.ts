@@ -10,6 +10,7 @@ export interface Project {
   members: string[]
   status: string
   project_lead?: string | null
+  project_lead_user?: UserSummary | null
   start_date?: string | null
   target_end_date?: string | null
   created_at: string
@@ -22,8 +23,9 @@ export interface ProjectSummary {
   description: string | null
   status: string | null
   project_lead: string | null
+  project_lead_user?: UserSummary | null
   created_at: string | null
-  target_end_date?: string
+  target_end_date?: string | null
 }
 
 export interface ProjectCreate {
@@ -55,6 +57,12 @@ export interface ProjectListResponse {
 export interface ProjectResponse {
   project: Project
   message?: string
+}
+
+export interface ProjectDetailResponse {
+  project: Project
+  project_lead_user: UserSummary | null
+  members: ProjectMember[]
 }
 
 export interface ProjectMembersResponse {
