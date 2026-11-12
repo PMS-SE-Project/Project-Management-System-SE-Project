@@ -224,10 +224,16 @@ def _serialize_task(task):
     result["id"] = str(result.pop("_id"))
     result["project_id"] = str(result["project_id"])
     result["status"] = result.get("status", "To Do")
+    result["assigned_to_user"] = None
 
     for field in ("assigned_to",):
         if isinstance(result.get(field), ObjectId):
             result[field] = str(result[field])
+    assigned_to_id = _as_object_id(task.get("assigned_to"))
+    if assigned_to_id is not None:
+        assigned_user = users_collection.find_one({"_id": assigned_to_id})
+        if assigned_user:
+            result["assigned_to_user"] = _serialize_user(assigned_user)
     if isinstance(result.get("created_by"), ObjectId):
         result["created_by"] = str(result["created_by"])
     if isinstance(result.get("deadline"), datetime):
@@ -338,6 +344,13 @@ def get_my_projects(session=Depends(get_current_session_or_401)):
 
     serialized_projects = []
     for project in projects:
+        project_lead_user = None
+        project_lead_id = _as_object_id(project.get("project_lead"))
+        if project_lead_id is not None:
+            lead = users_collection.find_one({"_id": project_lead_id})
+            if lead:
+                project_lead_user = _serialize_user(lead)
+
         serialized = {
             "id": str(project["_id"]),
             "name": project.get("name"),
@@ -353,6 +366,7 @@ def get_my_projects(session=Depends(get_current_session_or_401)):
                 if isinstance(project.get("created_at"), (date, datetime))
                 else project.get("created_at")
             ),
+            "project_lead_user": project_lead_user,
         }
         if project.get("target_end_date") is not None:
             target_end_date = project["target_end_date"]
@@ -364,6 +378,37 @@ def get_my_projects(session=Depends(get_current_session_or_401)):
         serialized_projects.append(serialized)
 
     return {"projects": serialized_projects}
+
+
+@router.get("/{project_id}")
+def get_project(
+    project_id: str,
+    session=Depends(get_current_session_or_401),
+):
+    project = _get_project_for_membership(project_id)
+    _require_task_viewer(project, session)
+
+    project_lead_user = None
+    project_lead_id = _as_object_id(project.get("project_lead"))
+    if project_lead_id is not None:
+        lead = users_collection.find_one({"_id": project_lead_id})
+        if lead:
+            project_lead_user = _serialize_user(lead)
+
+    members = []
+    for member_id in project.get("members", []):
+        member_object_id = _as_object_id(member_id)
+        if member_object_id is None:
+            continue
+        member = users_collection.find_one({"_id": member_object_id})
+        if member:
+            members.append(_serialize_user(member))
+
+    return {
+        "project": _serialize_project(project),
+        "project_lead_user": project_lead_user,
+        "members": members,
+    }
 
 
 @router.get("/tasks/my-tasks")
