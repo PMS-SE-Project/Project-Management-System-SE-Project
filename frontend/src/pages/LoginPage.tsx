@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useLocation, useNavigate } from 'react-router-dom'
 import { ApiError } from '../api/client'
 import { useAuth } from '../auth/useAuth'
 import { Alert } from '../components/ui/Alert'
@@ -16,6 +16,10 @@ interface LoginFormValues {
 interface LoginErrors {
   email?: string
   password?: string
+}
+
+interface LoginLocationState {
+  from?: string
 }
 
 function validate(values: LoginFormValues): LoginErrors {
@@ -37,7 +41,9 @@ function validate(values: LoginFormValues): LoginErrors {
 
 export function LoginPage() {
   const navigate = useNavigate()
-  const { signIn } = useAuth()
+  const { sessionValidationError, signIn } = useAuth()
+  const location = useLocation()
+  const locationState = location.state as LoginLocationState | null
   const [values, setValues] = useState<LoginFormValues>({ email: '', password: '' })
   const [errors, setErrors] = useState<LoginErrors>({})
   const [showPassword, setShowPassword] = useState(false)
@@ -72,7 +78,7 @@ export function LoginPage() {
         password: values.password,
       })
       setLoginSession(response)
-      navigate('/dashboard', {
+      navigate(locationState?.from || '/dashboard', {
         replace: true,
         state: { loginSession: response },
       })
@@ -149,6 +155,7 @@ export function LoginPage() {
               <Alert tone="info">Your credentials are sent securely to the ProjectHub API.</Alert>
             )}
             {authError && <Alert tone="error">{authError}</Alert>}
+            {sessionValidationError && <Alert tone="warning">{sessionValidationError}</Alert>}
             <Button loading={isSubmitting} type="submit">
               {isSubmitting ? 'Signing in' : 'Sign in'}
             </Button>

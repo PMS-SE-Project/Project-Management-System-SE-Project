@@ -588,6 +588,17 @@
 .ui-spinner-large { width: 30px; height: 30px; border-width: 3px; }
 @keyframes spinner-rotate { to { transform: rotate(360deg); } }
 
+.auth-loading {
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-4);
+}
+
+.auth-loading p {
+  margin: 0;
+  color: var(--color-muted);
+}
+
 .ui-alert { display: flex; align-items: flex-start; gap: 10px; padding: 12px; border: 1px solid; border-radius: var(--radius-md); font-size: 12px; }
 .ui-alert-success { color: var(--color-success); background: var(--color-success-soft); border-color: #9dccae; }
 .ui-alert-error { color: var(--color-danger); background: var(--color-danger-soft); border-color: #dfa29c; }

@@ -19,6 +19,14 @@ export class ApiError extends Error {
   }
 }
 
+type UnauthorizedHandler = (sessionId: string) => void
+
+let unauthorizedHandler: UnauthorizedHandler | null = null
+
+export function setUnauthorizedHandler(handler: UnauthorizedHandler | null) {
+  unauthorizedHandler = handler
+}
+
 function getApiBaseUrl(): string {
   return (import.meta.env.VITE_API_BASE_URL || DEFAULT_API_BASE_URL).replace(
     /\/+$/,
@@ -127,6 +135,9 @@ async function request<T>(
 
   const payload = await readResponseBody(response)
   if (!response.ok) {
+    if (response.status === 401 && sessionId) {
+      unauthorizedHandler?.(sessionId)
+    }
     throw new ApiError(response.status, getErrorMessage(payload, response.status))
   }
 

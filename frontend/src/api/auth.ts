@@ -34,8 +34,11 @@ export async function login(
   return parseLoginResponse(response)
 }
 
-export function getCurrentUser(sessionId: string): Promise<CurrentUserResponse> {
-  return apiClient.get<CurrentUserResponse>('/auth/me', { sessionId })
+export function getCurrentUser(
+  sessionId: string,
+  signal?: AbortSignal,
+): Promise<CurrentUserResponse> {
+  return apiClient.get<CurrentUserResponse>('/auth/me', { sessionId, signal })
 }
 
 export function logout(sessionId: string): Promise<{ message: string }> {
