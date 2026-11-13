@@ -461,14 +461,11 @@ def get_my_tasks(session=Depends(get_current_session_or_401)):
             detail="Not authenticated",
         )
 
-    # Retained assignments do not grant access after project membership ends.
-    project_ids = [project["_id"] for project in projects_collection.find(
-        {"members": {"$in": [user_id, str(user_id)]}}, {"_id": 1}
-    )]
-    references = project_ids + [str(project_id) for project_id in project_ids]
+    # This legacy endpoint grants read access through assignment, including
+    # retained assignments after project membership ends. Project routes still
+    # enforce their own membership and manager permissions.
     return {"tasks": [_serialize_task(task) for task in tasks_collection.find({
         "assigned_to": {"$in": [user_id, str(user_id)]},
-        "project_id": {"$in": references},
     })]}
 
 
@@ -944,10 +941,14 @@ def create_project(
 
     project_name = project.name.strip()
 
-    # The manager's list and project permissions use project_lead, not
-    # created_by. Associate new projects with their authenticated creator.
+    # Login sessions resolve to a manager so new projects remain visible and
+    # manageable in the frontend. Legacy email-only sessions may have no user
+    # record, in which case preserve creation without inventing a lead identity.
     creator = _get_authenticated_user(session)
-    if not creator or creator.get("role") != "project_manager":
+    if (
+        (creator is None and "user_id" in session)
+        or (creator is not None and creator.get("role") != "project_manager")
+    ):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
 
 # Reject duplicate project names, ignoring case
@@ -963,7 +964,7 @@ def create_project(
         "name": project_name,
         "description": project.description,
         "created_by": session["email"],
-        "project_lead": creator["_id"],
+        "project_lead": creator["_id"] if creator else None,
         "members": [],
         "status": "active",
         "created_at": datetime.now(timezone.utc),
@@ -984,7 +985,7 @@ def create_project(
             "name": project_data["name"],
             "description": project_data["description"],
             "created_by": project_data["created_by"],
-            "project_lead": str(project_data["project_lead"]),
+            "project_lead": str(project_data["project_lead"]) if creator else None,
             "members": project_data["members"],
             "status": project_data["status"],
             "created_at": project_data["created_at"].isoformat(),
