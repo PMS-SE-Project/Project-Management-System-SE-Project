@@ -13,6 +13,7 @@ class TaskCreate(BaseModel):
     assigned_to: str | None = None
     priority: Literal["low", "medium", "high"] = "medium"
     deadline: date | None = None
+    status: Literal["To Do", "In Progress", "Completed"] = "To Do"
 
     @field_validator("title")
     @classmethod
@@ -76,6 +77,7 @@ class TaskUpdate(BaseModel):
     assigned_to: str | None = None
     priority: Literal["low", "medium", "high"] | None = None
     deadline: date | None = None
+    status: Literal["To Do", "In Progress", "Completed"] = Field(default="To Do")
 
     @field_validator("title")
     @classmethod

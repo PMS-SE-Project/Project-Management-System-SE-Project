@@ -46,6 +46,14 @@ def _as_datetime(value):
 def _serialize_project(project):
     result = dict(project)
     result["id"] = str(result.pop("_id"))
+    # Membership is stored as ObjectIds by add_project_member. FastAPI cannot
+    # JSON-encode those values, even though the separate members endpoint can.
+    result["members"] = [
+        str(member_id) for member_id in (project.get("members") or [])
+        if _as_object_id(member_id) is not None
+    ]
+    if isinstance(result.get("created_by"), ObjectId):
+        result["created_by"] = str(result["created_by"])
 
     for field in ("created_at", "updated_at"):
         if isinstance(result.get(field), datetime):
@@ -103,11 +111,11 @@ def _get_project_for_membership(project_id: str):
     return project
 
 
-def _require_project_manager(project, session):
+def _require_project_manager(project, session, action="manage project members"):
     if session.get("role") != "project_manager":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only the assigned Project Manager can manage project members",
+            detail=f"Only the assigned Project Manager can {action}",
         )
 
     assigned = users_collection.find_one(
@@ -117,7 +125,7 @@ def _require_project_manager(project, session):
     if not assigned or lead_id is None or lead_id != _as_object_id(assigned.get("_id")):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only the assigned Project Manager can manage project members",
+            detail=f"Only the assigned Project Manager can {action}",
         )
 
 
@@ -181,7 +189,7 @@ def _require_task_viewer(project, session):
         member_ids = {
             member_id
             for member_id in (
-                _as_object_id(value) for value in project.get("members", [])
+                _as_object_id(value) for value in (project.get("members") or [])
             )
             if member_id is not None
         }
@@ -206,7 +214,7 @@ def _require_task_status_editor(project, session):
         member_ids = {
             member_id
             for member_id in (
-                _as_object_id(value) for value in project.get("members", [])
+                _as_object_id(value) for value in (project.get("members") or [])
             )
             if member_id is not None
         }
@@ -224,10 +232,16 @@ def _serialize_task(task):
     result["id"] = str(result.pop("_id"))
     result["project_id"] = str(result["project_id"])
     result["status"] = result.get("status", "To Do")
+    result["assigned_to_user"] = None
 
     for field in ("assigned_to",):
         if isinstance(result.get(field), ObjectId):
             result[field] = str(result[field])
+    assigned_to_id = _as_object_id(task.get("assigned_to"))
+    if assigned_to_id is not None:
+        assigned_user = users_collection.find_one({"_id": assigned_to_id})
+        if assigned_user:
+            result["assigned_to_user"] = _serialize_user(assigned_user)
     if isinstance(result.get("created_by"), ObjectId):
         result["created_by"] = str(result["created_by"])
     if isinstance(result.get("deadline"), datetime):
@@ -241,6 +255,8 @@ def _serialize_task(task):
 
 
 def _serialize_task_comment(comment):
+    author_id = _as_object_id(comment.get("author_id"))
+    author = users_collection.find_one({"_id": author_id}) if author_id else None
     created_at = comment.get("created_at")
     if isinstance(created_at, datetime):
         if created_at.tzinfo is None:
@@ -260,6 +276,7 @@ def _serialize_task_comment(comment):
         "project_id": str(comment["project_id"]),
         "task_id": str(comment["task_id"]),
         "author_id": str(comment["author_id"]),
+        "author": _serialize_user(author) if author else None,
         "content": comment["content"],
         "created_at": created_at,
     }
@@ -290,7 +307,7 @@ def _validate_task_assignee(project, assigned_to):
     member_ids = {
         member_id
         for member_id in (
-            _as_object_id(value) for value in project.get("members", [])
+            _as_object_id(value) for value in (project.get("members") or [])
         )
         if member_id is not None
     }
@@ -338,6 +355,13 @@ def get_my_projects(session=Depends(get_current_session_or_401)):
 
     serialized_projects = []
     for project in projects:
+        project_lead_user = None
+        project_lead_id = _as_object_id(project.get("project_lead"))
+        if project_lead_id is not None:
+            lead = users_collection.find_one({"_id": project_lead_id})
+            if lead:
+                project_lead_user = _serialize_user(lead)
+
         serialized = {
             "id": str(project["_id"]),
             "name": project.get("name"),
@@ -353,6 +377,7 @@ def get_my_projects(session=Depends(get_current_session_or_401)):
                 if isinstance(project.get("created_at"), (date, datetime))
                 else project.get("created_at")
             ),
+            "project_lead_user": project_lead_user,
         }
         if project.get("target_end_date") is not None:
             target_end_date = project["target_end_date"]
@@ -364,6 +389,60 @@ def get_my_projects(session=Depends(get_current_session_or_401)):
         serialized_projects.append(serialized)
 
     return {"projects": serialized_projects}
+
+
+@router.get("/eligible-leads")
+def get_eligible_project_leads(
+    session=Depends(get_current_session_or_401),
+):
+    if session.get("role") != "project_manager":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only Project Managers can view eligible project leads",
+        )
+
+    eligible_leads = []
+    for user in users_collection.find(
+        {"role": "project_manager"},
+        {"name": 1, "email": 1},
+    ):
+        eligible_leads.append({
+            "id": str(user["_id"]),
+            "name": user.get("name") or user["email"],
+            "email": user.get("email"),
+        })
+    return {"eligible_leads": eligible_leads}
+
+
+@router.get("/{project_id}")
+def get_project(
+    project_id: str,
+    session=Depends(get_current_session_or_401),
+):
+    project = _get_project_for_membership(project_id)
+    _require_task_viewer(project, session)
+
+    project_lead_user = None
+    project_lead_id = _as_object_id(project.get("project_lead"))
+    if project_lead_id is not None:
+        lead = users_collection.find_one({"_id": project_lead_id})
+        if lead:
+            project_lead_user = _serialize_user(lead)
+
+    members = []
+    for member_id in project.get("members") or []:
+        member_object_id = _as_object_id(member_id)
+        if member_object_id is None:
+            continue
+        member = users_collection.find_one({"_id": member_object_id})
+        if member:
+            members.append(_serialize_user(member))
+
+    return {
+        "project": _serialize_project(project),
+        "project_lead_user": project_lead_user,
+        "members": members,
+    }
 
 
 @router.get("/tasks/my-tasks")
@@ -382,12 +461,12 @@ def get_my_tasks(session=Depends(get_current_session_or_401)):
             detail="Not authenticated",
         )
 
-    return {
-        "tasks": [
-            _serialize_task(task)
-            for task in tasks_collection.find({"assigned_to": user_id})
-        ]
-    }
+    # This legacy endpoint grants read access through assignment, including
+    # retained assignments after project membership ends. Project routes still
+    # enforce their own membership and manager permissions.
+    return {"tasks": [_serialize_task(task) for task in tasks_collection.find({
+        "assigned_to": {"$in": [user_id, str(user_id)]},
+    })]}
 
 
 @router.get("/{project_id}/members")
@@ -398,7 +477,7 @@ def list_project_members(
 ):
     project = _get_project_for_membership(project_id)
     _require_project_manager(project, session)
-    member_ids = project.get("members", [])
+    member_ids = (project.get("members") or [])
     members = []
     for member_id in member_ids:
         if isinstance(member_id, str) and ObjectId.is_valid(member_id):
@@ -446,7 +525,7 @@ def create_task(
         "description": task.description,
         "assigned_to": assigned_to,
         "priority": task.priority,
-        "status": "To Do",
+        "status": task.status,
         "deadline": _as_datetime(task.deadline) if task.deadline is not None else None,
         "created_by": session["email"],
         "created_at": datetime.now(timezone.utc),
@@ -554,6 +633,11 @@ def update_task(
 
     changes["updated_at"] = datetime.now(timezone.utc)
     try:
+        if "title" in changes and tasks_collection.find_one({
+            "project_id": project["_id"], "title": changes["title"],
+            "_id": {"$ne": task_object_id},
+        }):
+            raise HTTPException(status_code=409, detail="A task with this title already exists in the project")
         updated = tasks_collection.find_one_and_update(
             {"_id": task_object_id, "project_id": project["_id"]},
             {"$set": changes},
@@ -710,7 +794,23 @@ def delete_task(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Task not found",
         )
+    task_comments_collection.delete_many({"project_id": project["_id"], "task_id": ObjectId(task_id)})
     return {"message": "Task deleted successfully"}
+
+
+@router.delete("/{project_id}")
+def delete_project(project_id: str, session=Depends(get_current_session_or_unauthorized)):
+    project = _get_project_for_membership(project_id)
+    _require_project_manager(project, session, "delete this project")
+    # Children are scoped by project. Never delete users or other projects.
+    # Keep the parent until child cleanup succeeds so failed requests can retry.
+    references = {"$in": [project["_id"], str(project["_id"])]}
+    task_comments_collection.delete_many({"project_id": references})
+    tasks_collection.delete_many({"project_id": references})
+    result = projects_collection.delete_one({"_id": project["_id"]})
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Project not found")
+    return {"message": "Project and associated tasks and comments deleted successfully"}
 
 
 @router.get("/{project_id}/eligible-members")
@@ -723,7 +823,7 @@ def get_eligible_project_members(
 
     excluded_ids = {
         member_id
-        for member_id in (_as_object_id(value) for value in project.get("members", []))
+        for member_id in (_as_object_id(value) for value in (project.get("members") or []))
         if member_id is not None
     }
     project_lead_id = _as_object_id(project.get("project_lead"))
@@ -782,7 +882,7 @@ def add_project_member(
             detail="Inactive users cannot be added to a project",
         )
 
-    members = project.get("members", [])
+    members = (project.get("members") or [])
     if user_id in members or str(user_id) in members:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -817,7 +917,7 @@ def remove_project_member(
             detail="The assigned Project Lead cannot be removed",
         )
 
-    members = project.get("members", [])
+    members = (project.get("members") or [])
     if member_id not in members and user_id not in members:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User is not a project member")
 
@@ -841,6 +941,16 @@ def create_project(
 
     project_name = project.name.strip()
 
+    # Login sessions resolve to a manager so new projects remain visible and
+    # manageable in the frontend. Legacy email-only sessions may have no user
+    # record, in which case preserve creation without inventing a lead identity.
+    creator = _get_authenticated_user(session)
+    if (
+        (creator is None and "user_id" in session)
+        or (creator is not None and creator.get("role") != "project_manager")
+    ):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
+
 # Reject duplicate project names, ignoring case
     existing_project = projects_collection.find_one({"name": project_name},collation={"locale": "en", "strength": 2},)
 
@@ -854,6 +964,7 @@ def create_project(
         "name": project_name,
         "description": project.description,
         "created_by": session["email"],
+        "project_lead": creator["_id"] if creator else None,
         "members": [],
         "status": "active",
         "created_at": datetime.now(timezone.utc),
@@ -874,39 +985,12 @@ def create_project(
             "name": project_data["name"],
             "description": project_data["description"],
             "created_by": project_data["created_by"],
+            "project_lead": str(project_data["project_lead"]) if creator else None,
             "members": project_data["members"],
             "status": project_data["status"],
             "created_at": project_data["created_at"].isoformat(),
         },
     }
-
-
-@router.get("/eligible-leads")
-def get_eligible_project_leads(
-    session=Depends(get_current_session_or_401),
-):
-    if session.get("role") != "project_manager":
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only Project Managers can view eligible project leads",
-        )
-
-    eligible_leads = []
-
-    for user in users_collection.find(
-        {"role": "project_manager"},
-        {"name": 1, "email": 1},
-    ):
-        eligible_leads.append(
-            {
-                "id": str(user["_id"]),
-                "name": user.get("name") or user["email"],
-                "email": user.get("email"),
-            }
-        )
-
-    return {"eligible_leads": eligible_leads}
-
 
 
 @router.put("/{project_id}")
@@ -939,6 +1023,8 @@ def update_project(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Project not found",
         )
+
+    _require_project_manager(existing, session, "edit this project")
 
     # Extract only fields supplied in the request
     changes = project.model_dump(exclude_unset=True)

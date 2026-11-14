@@ -1,0 +1,21 @@
+.projects-intro {
+  flex-wrap: wrap;
+}
+
+.projects-create-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+@media (max-width: 640px) {
+  .projects-intro {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .projects-create-actions {
+    width: 100%;
+  }
+}
