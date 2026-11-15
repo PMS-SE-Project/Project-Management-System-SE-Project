@@ -2,7 +2,7 @@
 SRS: PMS-SR-001, PMS-SR-002, PMS-SR-004  |  Test cases: TC-Sec-01, TC-Sec-02, TC-Sec-04
 """
 import pytest
-
+import app.auth.session as session_module
 from app.auth.password import hash_password, verify_password
 from tests.conftest import USERS, login
 
@@ -67,6 +67,24 @@ def test_logged_out_session_no_longer_exists(client, db):
     assert db["sessions"].count_documents({"session_id": sid}) == 0
 
 
-@pytest.mark.skip(reason="No protected endpoint exists yet - enable once a route checks session_id")
-def test_old_session_cannot_access_protected_route(client):
-    ...
+
+def test_old_session_cannot_access_protected_route(client, db, monkeypatch):
+    monkeypatch.setattr(session_module, "sessions_collection", db["sessions"])
+    monkeypatch.setattr(session_module, "users_collection", db["users"])
+
+    email, password, _ = USERS["admin"]
+    login_response = login(client, email, password)
+    assert login_response.status_code == 200
+    session_id = login_response.json()["session_id"]
+
+    logout_response = client.post(
+        "/auth/logout",
+        params={"session_id": session_id},
+    )
+    assert logout_response.status_code == 200
+
+    response = client.get(
+        "/projects/my-projects",
+        params={"session_id": session_id},
+    )
+    assert response.status_code == 401
