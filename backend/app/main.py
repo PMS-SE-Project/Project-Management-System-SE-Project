@@ -28,13 +28,14 @@ app.include_router(admin_router)
 # Cover ServerErrorMiddleware responses too, so a real HTTP 500 remains
 # readable by the frontend instead of becoming a browser CORS/network error.
 # Keep the existing allowed origins, methods, headers and credentials policy.
-app = CORSMiddleware(
-    app,
+app.add_middleware(
+    CORSMiddleware,
     allow_origins=[
         "http://localhost:5173",
         "http://127.0.0.1:5173",
+        "https://project-management-system-se-projec.vercel.app",
     ],
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    allow_headers=["Accept", "Content-Type"],
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
