@@ -4,7 +4,7 @@ A web-based Project Management System developed as a Software Engineering projec
 
 ## Live Demo
 
-**[Open the Project Management System](https://project-management-system-se-projec.vercel.app/dashboard)**
+**[Open the Project Management System](https://project-management-system-se-projec.vercel.app/)**
 
 You can access the deployed application directly without installing it locally.
 
